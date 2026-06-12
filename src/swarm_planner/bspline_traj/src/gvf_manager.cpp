@@ -141,6 +141,12 @@ namespace FLAG_Race
     }
     gvf_manager::~gvf_manager() {}
 
+    Eigen::Vector3d gvf_manager::projectToPlanningSlice(const Eigen::Vector3d& pos) const
+    {
+        if (!use_b2_platform_) return pos;
+        return Eigen::Vector3d(pos.x(), pos.y(), planning_z_);
+    }
+
     void gvf_manager::initCallback(ros::NodeHandle &nh)
     {
         // exec_timer = nh.createTimer(ros::Duration(0.02), &gvf_manager::execTimerCallback, this);  // 修改为execTimerCallback，频率0.02s
@@ -816,6 +822,17 @@ void gvf_manager::cmdCallback(const ros::TimerEvent& event)
     }
 
     auto& pm = swarmParticlesManager[0];
+    if (pm.last_traj.rows() <= 1 || pm.last_vel.rows() != pm.last_traj.rows() ||
+        !pm.gvf_ || !pm.gvf_->reparam_ready_) {
+        publishZeroB2VelocityCommand();
+        ROS_WARN_THROTTLE(0.5,
+                          "[GVF][B2_CMD] trajectory not ready: traj=%d vel=%d reparam=%d",
+                          (int)pm.last_traj.rows(),
+                          (int)pm.last_vel.rows(),
+                          pm.gvf_ ? (int)pm.gvf_->reparam_ready_ : 0);
+        return;
+    }
+
     const Eigen::Vector3d pos = odom_;
     const Eigen::Vector3d goal = pm.goal_pt;
     const double real_dis_to_goal = (goal - pos).head<2>().norm();
@@ -3530,7 +3547,7 @@ bool gvf_manager::selectClosedGoalCandidate(gvfManager& pm,
     double partial_lookahead = 0.0;
     double partial_goal_w = closed_ref_w_;
     double partial_end_to_goal_dist = std::numeric_limits<double>::infinity();
-    Eigen::Vector3d partial_goal = pointFromClosedW(partial_goal_w);
+    Eigen::Vector3d partial_goal = projectToPlanningSlice(pointFromClosedW(partial_goal_w));
     KinoPlanSamples partial_samples;
 
     std::ostringstream tried_lookaheads_ss;
@@ -3541,7 +3558,7 @@ bool gvf_manager::selectClosedGoalCandidate(gvfManager& pm,
     for (int idx : order) {
         const double lookahead = candidates[idx];
         const double goal_w = closed_ref_w_ + lookahead;
-        const Eigen::Vector3d candidate_goal = pointFromClosedW(goal_w);
+        const Eigen::Vector3d candidate_goal = projectToPlanningSlice(pointFromClosedW(goal_w));
         if (tried_lookaheads_ss.tellp() > 0) tried_lookaheads_ss << ",";
         tried_lookaheads_ss << lookahead;
 
@@ -3642,23 +3659,27 @@ bool gvf_manager::astaropt(const Eigen::Vector3d& curr_pos, Eigen::MatrixXd& pos
     Eigen::Vector3d start_pt, start_vel = Eigen::Vector3d::Zero(), start_acc = Eigen::Vector3d::Zero();
 
     if (pm.is_first_goal || pm.last_traj.rows() == 0) {
-        start_pt = Eigen::Vector3d(odom_.x() + 1e-6, odom_.y() + 1e-6, planning_z_);
+        start_pt = projectToPlanningSlice(odom_);
+        start_pt.x() += 1e-6;
+        start_pt.y() += 1e-6;
         pm.is_first_goal = false;
     } else {
 
         int i0 = std::max(0, std::min(current_traj_index_, (int)pm.last_traj.rows() - 1));
 
-        start_pt = pm.last_traj.row(i0).transpose();
+        start_pt = projectToPlanningSlice(pm.last_traj.row(i0).transpose());
         start_vel = pm.last_vel.row(i0).transpose();
+        start_vel.z() = 0.0;
 
         double dt = 1.0 / std::max(1, pm.spline_->TrajSampleRate);
         if (i0 + 1 < pm.last_vel.rows()) {
             start_acc = (pm.last_vel.row(i0 + 1) - pm.last_vel.row(i0)).transpose() / dt;
+            start_acc.z() = 0.0;
         }
 
     }
 
-    Eigen::Vector3d goal_pt = pm.goal_pt;
+    Eigen::Vector3d goal_pt = projectToPlanningSlice(pm.goal_pt);
     Eigen::Vector3d end_vel = Eigen::Vector3d::Zero();
     const bool use_closed_goal_candidates = enable_circle_reference_test_ && circle_reference_ready_;
     KinoPlanSamples plan_samples;
@@ -3678,6 +3699,19 @@ bool gvf_manager::astaropt(const Eigen::Vector3d& curr_pos, Eigen::MatrixXd& pos
     vector<Eigen::Vector3d> point_set = plan_samples.point_set;
     vector<Eigen::Vector3d> start_end_derivatives = plan_samples.start_end_derivatives;
     double ts = plan_samples.ts;
+
+    if (point_set.empty() || start_end_derivatives.size() < 3) {
+        ROS_WARN("[gvf kino replan] invalid kino samples: points=%zu derivatives=%zu",
+                 point_set.size(), start_end_derivatives.size());
+        return false;
+    }
+
+    for (auto& pt : point_set) {
+        pt = projectToPlanningSlice(pt);
+    }
+    for (auto& derivative : start_end_derivatives) {
+        derivative.z() = 0.0;
+    }
 
     if (use_closed_goal_candidates && !point_set.empty()) {
         const Eigen::Vector3d kino_end_pos = point_set.back();
@@ -3741,6 +3775,15 @@ bool gvf_manager::astaropt(const Eigen::Vector3d& curr_pos, Eigen::MatrixXd& pos
 
     Eigen::MatrixXd p_ = p.getTrajectory(p.time_);
     Eigen::MatrixXd v_ = v.getTrajectory(p.time_);
+
+    if (use_b2_platform_) {
+        for (int i = 0; i < p_.rows(); ++i) {
+            p_(i, 2) = planning_z_;
+        }
+        for (int i = 0; i < v_.rows(); ++i) {
+            v_(i, 2) = 0.0;
+        }
+    }
 
     // 找候选轨迹上离当前 odom 最近的索引（用于后续切换/跟踪）
     int best = 0;

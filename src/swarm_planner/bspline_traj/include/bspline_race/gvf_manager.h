@@ -438,6 +438,7 @@ class gvf_manager
                                 bool switch_active) const;
         void publishB2VelocityCommand(const Eigen::Vector3d& guidance_world, double dt);
         void publishZeroB2VelocityCommand();
+        Eigen::Vector3d projectToPlanningSlice(const Eigen::Vector3d& pos) const;
         double yawFromTrajectory(const Eigen::MatrixXd& traj, int index) const;
         double yawFromVelocity(const Eigen::MatrixXd& vel, int index) const;
         FootprintCheckResult evaluateB2Footprint(const gvfManager& pm,

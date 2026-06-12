@@ -208,8 +208,8 @@
         <param name="astar/resolution_astar" value="0.1" type="double"/>
         <param name="astar/time_resolution" value="0.8" type="double"/>
         <param name="astar/margin" value="0.6" type="double"/>
-        <param name="astar/z_min" value="0.3" type="double"/>
-        <param name="astar/z_max" value="0.7" type="double"/>
+        <param name="astar/z_min" value="0.45" type="double"/>
+        <param name="astar/z_max" value="0.55" type="double"/>
         <param name="astar/z_ref" value="0.5" type="double"/>
         <param name="astar/w_z" value="20.0" type="double"/>
         <param name="astar/allocate_num" value="1000000" type="int"/>
@@ -228,8 +228,8 @@
         <param name="search/margin" value="0.5" type="double"/>
         <param name="search/allocate_num" value="100000" type="int"/>
         <param name="search/check_num" value="5" type="int"/>
-        <param name="search/z_min" value="0.3" type="double"/>
-        <param name="search/z_max" value="0.7" type="double"/>
+        <param name="search/z_min" value="0.45" type="double"/>
+        <param name="search/z_max" value="0.55" type="double"/>
 
         <!-- kinodynamic path searching -->
         <!-- <param name="search/max_tau" value="0.6" type="double"/>
