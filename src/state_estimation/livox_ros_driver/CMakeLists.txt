@@ -82,8 +82,19 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-## make sure the livox_sdk_static library is installed
-set(LIVOX_SDK_LIBRARY ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build/sdk_core/liblivox_sdk_static.a)
+## make sure the livox_sdk_static library is available. Prefer the system
+## installation on the robot, then fall back to vendored copies in this package.
+find_library(LIVOX_SDK_LIBRARY NAMES livox_sdk_static liblivox_sdk_static.a
+    PATHS /usr/local/lib
+    NO_DEFAULT_PATH)
+
+if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
+    set(LIVOX_SDK_LIBRARY ${CMAKE_CURRENT_SOURCE_DIR}/liblivox_sdk_static.a)
+endif()
+
+if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
+    set(LIVOX_SDK_LIBRARY ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build/sdk_core/liblivox_sdk_static.a)
+endif()
 
 if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
 	# couldn't find the livox sdk library
@@ -127,16 +138,12 @@ if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
 	# )
 
 else()
-	message("find livox sdk library success")
+	message("find livox sdk library success: ${LIVOX_SDK_LIBRARY}")
 	include_directories(
 		./
 		${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/sdk_core/include
 	)
 
-	link_directories(
-		./
-		${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build/sdk_core
-	)
 endif()
 
 ## PCL library
