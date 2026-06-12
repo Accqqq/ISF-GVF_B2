@@ -1558,7 +1558,9 @@ void SDFMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr& img) {
 
   if (isnan(md_.camera_pos_(0)) || isnan(md_.camera_pos_(1)) || isnan(md_.camera_pos_(2))) return;
 
-  // buffer will be refreshed periodically by timer if enabled
+  // Rebuild local inflated occupancy from the current point-cloud frame.
+  // Otherwise dynamic obstacles from previous frames remain in the planner map.
+  resetBuffer(md_.camera_pos_ - mp_.local_update_range_, md_.camera_pos_ + mp_.local_update_range_);
 
   pcl::PointXYZ pt;
   Eigen::Vector3d p3d, p3d_inf;

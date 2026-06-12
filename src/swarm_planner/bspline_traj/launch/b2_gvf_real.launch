@@ -18,7 +18,7 @@
 
   <node name="formation_planning" pkg="bspline_race" type="formation_planning" output="screen">
         <!-- Plan Manager -->
-        <param name="gvf/cloud_topic"      type="string" value="/cloud_registered" />
+        <param name="gvf/cloud_topic"      type="string" value="/fastLIO/non_ground_points" />
         <param name="gvf/odom_topic"       type="string" value="/Odometry" />
         <param name="gvf/cmd_topic"        type="string" value="/cmd_vel" />
         <param name="gvf/platform"         type="string" value="b2" />
@@ -180,7 +180,7 @@
         <param name="sdf_map/manual_map_auto_save" value="true" />
 
         <!-- depth filter -->
-        <param name="sdf_map/use_depth_filter" value="true"/>
+        <param name="sdf_map/use_depth_filter" value="false"/>
         <param name="sdf_map/depth_filter_tolerance" value="0.15"/>
         <param name="sdf_map/depth_filter_maxdist"   value="5.0"/>
         <param name="sdf_map/depth_filter_mindist"   value="0.2"/>

@@ -51,6 +51,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/filters/crop_box.h>
 #include <pcl/io/pcd_io.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_datatypes.h>
@@ -59,6 +61,7 @@
 #include <livox_ros_driver/CustomMsg.h>
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
+#include "ray_ground_filter.h"
 
 #define INIT_TIME           (0.1)
 #define LASER_POINT_COV     (0.001)
@@ -105,6 +108,10 @@ deque<double>                     time_buffer;
 deque<PointCloudXYZI::Ptr>        lidar_buffer;
 deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
 
+pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_raw(new pcl::PointCloud<pcl::PointXYZI>);
+pcl::PointCloud<pcl::PointXYZI>::Ptr ground_points(new pcl::PointCloud<pcl::PointXYZI>);
+pcl::PointCloud<pcl::PointXYZI>::Ptr nonground_points(new pcl::PointCloud<pcl::PointXYZI>);
+
 PointCloudXYZI::Ptr featsFromMap(new PointCloudXYZI());
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());
 PointCloudXYZI::Ptr feats_down_body(new PointCloudXYZI());
@@ -139,6 +146,34 @@ geometry_msgs::PoseStamped msg_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
+
+void run_GroundRemover(pcl::PointCloud<pcl::PointXYZI>::Ptr input_cloud,
+                       pcl::PointCloud<pcl::PointXYZI>::Ptr ground_points,
+                       pcl::PointCloud<pcl::PointXYZI>::Ptr no_ground_points)
+{
+    if (input_cloud->empty()) return;
+
+    PointCloudXYZIRTColor organized_points;
+    std::vector<pcl::PointIndices> radial_division_indices;
+    std::vector<PointCloudXYZIRTColor> radial_ordered_clouds;
+
+    RayGroundFilter ray_ground_filter;
+    pcl::PointIndices ground_indices, no_ground_indices;
+
+    ray_ground_filter.XYZI_to_RTZColor(input_cloud, organized_points,
+                                       radial_division_indices, radial_ordered_clouds);
+    ray_ground_filter.classify_pc(radial_ordered_clouds, ground_indices, no_ground_indices);
+
+    pcl::ExtractIndices<pcl::PointXYZI> extract_ground;
+    extract_ground.setInputCloud(input_cloud);
+    extract_ground.setIndices(boost::make_shared<pcl::PointIndices>(ground_indices));
+
+    extract_ground.setNegative(false);
+    extract_ground.filter(*ground_points);
+
+    extract_ground.setNegative(true);
+    extract_ground.filter(*no_ground_points);
+}
 
 void SigHandle(int sig)
 {
@@ -198,6 +233,17 @@ void pointBodyToWorld(const Matrix<T, 3, 1> &pi, Matrix<T, 3, 1> &po)
 }
 
 void RGBpointBodyToWorld(PointType const * const pi, PointType * const po)
+{
+    V3D p_body(pi->x, pi->y, pi->z);
+    V3D p_global(state_point.rot * (state_point.offset_R_L_I*p_body + state_point.offset_T_L_I) + state_point.pos);
+
+    po->x = p_global(0);
+    po->y = p_global(1);
+    po->z = p_global(2);
+    po->intensity = pi->intensity;
+}
+
+void RGBpointBodyToWorld(pcl::PointXYZI const * const pi, pcl::PointXYZI * const po)
 {
     V3D p_body(pi->x, pi->y, pi->z);
     V3D p_global(state_point.rot * (state_point.offset_R_L_I*p_body + state_point.offset_T_L_I) + state_point.pos);
@@ -286,6 +332,8 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
         ROS_ERROR("lidar loop back, clear buffer");
         lidar_buffer.clear();
     }
+
+    pcl::fromROSMsg(*msg, *cloud_raw);
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
@@ -527,6 +575,24 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
             scan_wait_num = 0;
         }
     }
+}
+
+void publishWorldPoints(const ros::Publisher & pubWorldPoints, pcl::PointCloud<pcl::PointXYZI>::Ptr input_points)
+{
+    int size = input_points->points.size();
+    pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudWorld(new pcl::PointCloud<pcl::PointXYZI>(size, 1));
+
+    for (int i = 0; i < size; i++)
+    {
+        RGBpointBodyToWorld(&input_points->points[i],
+                            &laserCloudWorld->points[i]);
+    }
+
+    sensor_msgs::PointCloud2 laserCloudmsg;
+    pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
+    laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
+    laserCloudmsg.header.frame_id = "camera_init";
+    pubWorldPoints.publish(laserCloudmsg);
 }
 
 void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
@@ -862,6 +928,12 @@ int main(int argc, char** argv)
             ("/Odometry", 100000);
     ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
             ("/path", 100000);
+    ros::Publisher pubWorldPoints = nh.advertise<sensor_msgs::PointCloud2>
+            ("/fastLIO/points_world", 100000);
+    ros::Publisher pubGroundPoints = nh.advertise<sensor_msgs::PointCloud2>
+            ("/fastLIO/ground_points", 100000);
+    ros::Publisher pubNonGroundPoints = nh.advertise<sensor_msgs::PointCloud2>
+            ("/fastLIO/non_ground_points", 100000);
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
@@ -986,6 +1058,24 @@ int main(int argc, char** argv)
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
             // publish_effect_world(pubLaserCloudEffect);
             // publish_map(pubLaserCloudMap);
+
+            if (!cloud_raw->empty())
+            {
+                ground_points->clear();
+                nonground_points->clear();
+
+                run_GroundRemover(cloud_raw, ground_points, nonground_points);
+                publishWorldPoints(pubWorldPoints, cloud_raw);
+                publishWorldPoints(pubGroundPoints, ground_points);
+
+                pcl::CropBox<pcl::PointXYZI> boxFilter;
+                boxFilter.setMin(Eigen::Vector4f(-5.0, -5.0, -0.5, 1.0));
+                boxFilter.setMax(Eigen::Vector4f(5.0, 5.0, 1.5, 1.0));
+                boxFilter.setInputCloud(nonground_points);
+                boxFilter.filter(*nonground_points);
+
+                publishWorldPoints(pubNonGroundPoints, nonground_points);
+            }
 
             /*** Debug variables ***/
             if (runtime_pos_log)
