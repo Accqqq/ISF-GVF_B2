@@ -1,0 +1,1 @@
+Ignored in B2_gvf to avoid pulling UAV-only quadrotor message dependencies.

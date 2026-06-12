@@ -1,0 +1,23 @@
+<launch>
+    <arg name="global_rviz_config" default="$(find bspline_race)/config/b2_gvf_swarm.rviz" />
+    <arg name="fpv_rviz_config" default="$(find bspline_race)/config/b2_gvf_fpv.rviz" />
+    <arg name="map_file" default="$(find map_generator)/resource/pillar.pcd" />
+
+    <node pkg="map_generator"
+          type="map_pub"
+          name="map_pub"
+          output="screen"
+          args="$(arg map_file)" />
+
+    <node pkg="rviz"
+          type="rviz"
+          name="rviz_global"
+          required="true"
+          args="-d $(arg global_rviz_config)" />
+
+    <node pkg="rviz"
+          type="rviz"
+          name="rviz_fpv"
+          required="true"
+          args="-d $(arg fpv_rviz_config)" />
+</launch>

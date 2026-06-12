@@ -1,0 +1,40 @@
+<launch>
+  <!-- 发布b2底层IMU数据 -->
+  <node pkg="b2_ros_sdk" name="b2_imu_pub" type="b2_imu_pub" args="eth0" />
+
+  <!-- 速度控制 -->
+  <node pkg="b2_ros_sdk" name="velocity_control" type="velocity_control" args="eth0" />
+
+  <!-- 状态查询 -->
+  <!--node pkg="b2_ros_sdk" name="show_mode" type="show_mode" args="eth0" /-->
+
+  <!-- RS雷达SDK -->
+  <node pkg="rslidar_sdk" name="rslidar_sdk_node" type="rslidar_sdk_node" output="screen">
+    <param name="config_path" value=""/>
+  </node>
+  
+  <!-- RS雷达数据转velodyne数据 -->
+  <node pkg="rs_to_velodyne" name="rs_to_velodyne" type="rs_to_velodyne" args="XYZIRT XYZIRT" output="screen"/>
+  
+  <!-- FASTLIO建图 -->
+  <!--<include file="$(find fast_lio)/launch/mapping_velodyne.launch"/> -->
+
+  <!-- RealSense相机 -->
+  <include file="$(find realsense2_camera)/launch/rs_aligned_depth.launch"/>
+    <!-- <arg name="camera"          value="camera"/>
+    <arg name="align_depth"     value="true"/>
+    <arg name="enable_color"    value="true"/>
+    <arg name="enable_depth"    value="false"/>
+    <arg name="enable_infra"    value="false"/>
+    <arg name="depth_width"     value="320"/>
+    <arg name="depth_height"    value="240"/>
+    <arg name="color_width"     value="320"/>
+    <arg name="color_height"    value="240"/>
+    <arg name="depth_fps"       value="6"/>
+    <arg name="color_fps"       value="6"/>
+    <arg name="initial_reset"   value="true"/>
+  </include> -->
+  
+  <!-- RViz可视化 (可选) -->
+  <!-- <node pkg="rviz" name="rviz" type="rviz" args="-d $(find rs_to_velodyne)/config/config.rviz" /> -->
+</launch>

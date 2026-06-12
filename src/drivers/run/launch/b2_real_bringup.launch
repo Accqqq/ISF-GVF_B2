@@ -1,0 +1,30 @@
+<launch>
+  <arg name="network_interface" default="eth0" />
+  <arg name="rviz" default="false" />
+  <arg name="odom_topic" default="/Odometry" />
+  <arg name="imu_topic" default="/imu_data" />
+  <arg name="point_topic" default="/velodyne_points" />
+
+  <!-- B2底层：IMU发布和/cmd_vel到SportClient::Move。 -->
+  <node pkg="b2_ros_sdk" name="b2_imu_pub" type="b2_imu_pub"
+        args="$(arg network_interface)" output="screen" />
+  <node pkg="b2_ros_sdk" name="velocity_control" type="velocity_control"
+        args="$(arg network_interface)" output="screen" />
+
+  <!-- RS雷达和Velodyne格式转换，FAST-LIO接收/velodyne_points。 -->
+  <node pkg="rslidar_sdk" name="rslidar_sdk_node" type="rslidar_sdk_node" output="screen">
+    <param name="config_path" value="" />
+  </node>
+  <node pkg="rs_to_velodyne" name="rs_to_velodyne" type="rs_to_velodyne"
+        args="XYZIRT XYZIRT" output="screen" />
+
+  <include file="$(find fast_lio)/launch/mapping_velodyne_b2.launch">
+    <arg name="rviz" value="$(arg rviz)" />
+    <arg name="robot_odom_topic" value="$(arg odom_topic)" />
+    <arg name="robot_imu_topic" value="$(arg imu_topic)" />
+    <arg name="robot_point_topic" value="$(arg point_topic)" />
+  </include>
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_camera_init"
+        args="0 0 0 0 0 0 world camera_init" output="screen" />
+</launch>

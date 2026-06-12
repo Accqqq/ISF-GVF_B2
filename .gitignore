@@ -1,0 +1,25 @@
+# Catkin generated spaces
+/build/
+/devel/
+/install/
+/logs/
+
+# IDE and local tooling
+.vscode/
+.idea/
+*.swp
+*~
+
+# Runtime output and recorded data
+*.bag
+*.bag.active
+*.log
+/core
+/core.*
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# CMake temporary files
+src/state_estimation/livox_ros_driver/Livox-SDK/build/
