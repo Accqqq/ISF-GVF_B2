@@ -25,20 +25,22 @@
         <param name="gvf/planning_z"       value="0.5" />
         <param name="gvf/b2/vx_max" value="0.6" />
         <param name="gvf/b2/vy_max" value="0.4" />
-        <param name="gvf/b2/yaw_rate_max" value="0.8" />
+        <param name="gvf/b2/yaw_rate_max" value="1.2" />
         <param name="gvf/b2/acc_x_max" value="0.5" />
         <param name="gvf/b2/acc_y_max" value="0.3" />
-        <param name="gvf/b2/yaw_acc_max" value="1.0" />
+        <param name="gvf/b2/yaw_acc_max" value="3.0" />
         <param name="gvf/b2/mpc/dt" value="0.1" />
         <param name="gvf/b2/mpc/horizon_steps" value="10" />
         <param name="gvf/b2/mpc/iterations" value="6" />
         <param name="gvf/b2/mpc/tau_x" value="0.25" />
         <param name="gvf/b2/mpc/tau_y" value="0.30" />
-        <param name="gvf/b2/mpc/tau_yaw" value="0.20" />
+        <param name="gvf/b2/mpc/tau_yaw" value="0.30" />
         <param name="gvf/b2/mpc/velocity_weight" value="20.0" />
-        <param name="gvf/b2/mpc/heading_weight" value="1.0" />
+        <param name="gvf/b2/mpc/heading_weight" value="6.0" />
         <param name="gvf/b2/mpc/control_weight" value="0.02" />
-        <param name="gvf/b2/mpc/control_rate_weight" value="0.20" />
+        <param name="gvf/b2/mpc/control_rate_weight" value="0.08" />
+        <param name="gvf/b2/mpc/lateral_error_weight" value="2.0" />
+        <param name="gvf/b2/mpc/reference_invalid_penalty" value="10000.0" />
         <param name="gvf/b2/footprint/enable" value="true" />
         <param name="gvf/b2/footprint/length" value="1.10" />
         <param name="gvf/b2/footprint/width" value="0.45" />
@@ -105,6 +107,8 @@
         <param name="gvf/local_update_range_z" value="2.05" />
         <!-- 碰撞检测参数 -->
         <param name="gvf/collision_threshold" value="0.15" />
+        <param name="gvf/collision_check_horizon_pts" value="80" />
+        <param name="gvf/collision_consecutive_hits" value="5" />
         <!-- 自适应GVF参数配置 -->
         <param name="gvf/adaptive_enabled" value="false" />
         <param name="gvf/convergence_bandwidth" value="0.10" />
@@ -116,34 +120,6 @@
 
 
        <param name="gvf/debug_gate" value="true"/>
-
-        <!-- vel_max/speed_max: GVF 与 cmd_pos 的速度上限 -->
-        <param name="gvf/cmd/vel_max" value="2.0" />
-
-        <!-- acc_max: governor 输出诊断用加速度阈值 -->
-        <param name="gvf/cmd/acc_max" value="8.0" />
-
-        <param name="gvf/cmd/pos_gain_equiv" value="1.65" />
-        <param name="gvf/cmd/switch_motion_limit_time" value="0.25" />
-        <param name="gvf/cmd/tangent_vel_max" value="2.0" />
-        <param name="gvf/cmd/governor_l_min" value="0.0" />
-        <param name="gvf/cmd/governor_l_max" value="1.6" />
-        <param name="gvf/cmd/governor_l_step" value="0.05" />
-        <param name="gvf/cmd/governor_l_rate_max" value="4.0" />
-        <param name="gvf/cmd/governor_l_ff_weight" value="0.8" />
-        <param name="gvf/cmd/governor_lead_max" value="1.6" />
-        <param name="gvf/cmd/governor_normal_cross_max" value="0.08" />
-        <param name="gvf/cmd/governor_normal_deadband" value="0.05" />
-        <param name="gvf/cmd/governor_normal_full_error" value="0.20" />
-        <param name="gvf/cmd/governor_normal_max" value="0.25" />
-        <param name="gvf/cmd/governor_normal_rate_max" value="0.5" />
-        <param name="gvf/cmd/governor_l_rate_weight" value="0.005" />
-        <param name="gvf/cmd/governor_normal_weight" value="0.60" />
-        <param name="gvf/cmd/governor_normal_rate_weight" value="0.10" />
-        <param name="gvf/cmd/governor_tau_vel_weight" value="1.0" />
-        <param name="gvf/cmd/governor_normal_vel_weight" value="1.0" />
-        <param name="gvf/cmd/governor_normal_vel_error_cap" value="2.0" />
-
 
         <!-- Gain test: 固定位置领先距离测量位置环等效增益，测完改回 false -->
         <param name="gvf/cmd/gain_test_enable" value="false" />

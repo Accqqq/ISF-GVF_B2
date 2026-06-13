@@ -2,6 +2,7 @@
 #include <bspline_race/b2_velocity_mpc.h>
 
 #include <cmath>
+#include <memory>
 
 using FLAG_Race::B2MpcConfig;
 using FLAG_Race::B2MpcState;
@@ -88,6 +89,51 @@ TEST(B2VelocityMpcTest, ZeroGuidancePublishesStopAndResetsRateState) {
 
   const auto restarted = controller.compute(Eigen::Vector3d(1.0, 0.0, 0.0), state, 0.1);
   EXPECT_NEAR(restarted.vx, 0.05, 1e-6);
+}
+
+
+namespace {
+
+struct FakeGuidanceResult {
+  Eigen::Vector3d v_cmd = Eigen::Vector3d::Zero();
+  double w_proj = 0.0;
+  double w_dot = 0.0;
+  Eigen::Vector3d e_perp = Eigen::Vector3d::Zero();
+  bool valid = false;
+};
+
+struct TurnFakeGvf {
+  FakeGuidanceResult calcLiftedGuidance3D(const Eigen::Vector3d& pos, double w_prev) const {
+    FakeGuidanceResult out;
+    out.valid = true;
+    out.w_proj = w_prev;
+    out.w_dot = 1.0;
+    out.v_cmd = (w_prev < 0.25) ? Eigen::Vector3d(1.0, 0.0, 0.0)
+                                : Eigen::Vector3d(0.0, 1.0, 0.0);
+    out.e_perp = Eigen::Vector3d(0.0, pos.y(), 0.0);
+    return out;
+  }
+};
+
+}  // namespace
+
+TEST(B2VelocityMpcTest, WAwareModeAdvancesDynamicProgressThroughHorizon) {
+  B2MpcConfig cfg = TestConfig();
+  cfg.horizon_steps = 6;
+  cfg.dt = 0.1;
+  cfg.heading_weight = 0.0;
+  cfg.lateral_error_weight = 0.0;
+  B2VelocityMpcController controller(cfg);
+  B2MpcState state;
+  state.position_world = Eigen::Vector3d::Zero();
+
+  const auto gvf = std::make_shared<TurnFakeGvf>();
+  controller.computeWaware(gvf, 0.0, state, 0.1);
+  const auto debug = controller.lastDebug();
+
+  EXPECT_NEAR(debug.progress_w_start, 0.0, 1e-9);
+  EXPECT_GT(debug.progress_w_end, 0.25);
+  EXPECT_NEAR(debug.first_reference_world.x(), 1.0, 1e-9);
 }
 
 int main(int argc, char** argv) {

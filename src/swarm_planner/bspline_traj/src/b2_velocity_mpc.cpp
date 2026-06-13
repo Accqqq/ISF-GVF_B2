@@ -18,10 +18,13 @@ void B2VelocityMpcController::setConfig(const B2MpcConfig& config) {
 
 const B2MpcConfig& B2VelocityMpcController::config() const { return config_; }
 
+const B2MpcDebug& B2VelocityMpcController::lastDebug() const { return last_debug_; }
+
 void B2VelocityMpcController::reset() {
   last_solution_.clear();
   last_cmd_ = B2MpcCommand{};
   has_last_cmd_ = false;
+  last_debug_ = B2MpcDebug{};
 }
 
 double B2VelocityMpcController::wrapAngle(double angle) {

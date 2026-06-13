@@ -96,29 +96,6 @@ class gvf_manager
         double goal_reach_radius_ = 2.0;// m，判定到达目标点半径
         double start_pt_change_threshold_ = 1.0; // m，起点变化阈值
 
-        double cmd_vel_max_ = 1.25;          // m/s，GVF 输出速度限幅
-        double cmd_acc_max_ = 1.5;           // m/s^2，仅用于 governor 输出诊断
-        double cmd_pos_gain_equiv_ = 1.10;   // 位置环等效增益：v_actual ≈ K * position_error
-        double cmd_switch_motion_limit_time_ = 0.25; // s，仅用于切换窗口诊断
-        double cmd_tangent_vel_max_ = 2.0;
-        double cmd_governor_l_min_ = 0.0;
-        double cmd_governor_l_max_ = 1.6;
-        double cmd_governor_l_step_ = 0.05;
-        double cmd_governor_l_rate_max_ = 4.0;
-        double cmd_governor_l_ff_weight_ = 0.8;
-        double cmd_governor_lead_max_ = 1.6;
-        double cmd_governor_normal_cross_max_ = 0.08;
-        double cmd_governor_normal_deadband_ = 0.05;
-        double cmd_governor_normal_full_error_ = 0.35;
-        double cmd_governor_normal_max_ = 0.0;
-        double cmd_governor_normal_rate_max_ = 0.6;
-        double cmd_governor_l_rate_weight_ = 0.005;
-        double cmd_governor_normal_weight_ = 0.60;
-        double cmd_governor_normal_rate_weight_ = 0.10;
-        double cmd_governor_tau_vel_weight_ = 1.0;
-        double cmd_governor_normal_vel_weight_ = 1.0;
-        double cmd_governor_normal_vel_error_cap_ = 2.0;
-        double switch_governor_path_margin_w_ = 0.2;
         B2MpcConfig b2_mpc_config_;
         B2VelocityMpcController b2_mpc_controller_;
         B2FootprintConfig b2_footprint_config_;
@@ -133,13 +110,6 @@ class gvf_manager
         Eigen::Vector3d last_cmd_pos_ = Eigen::Vector3d::Zero();
         Eigen::Vector3d last_curve_vel_ = Eigen::Vector3d::Zero();
         bool has_last_curve_vel_ = false;
-        Eigen::Vector3d last_governor_cmd_pos_ = Eigen::Vector3d::Zero();
-        Eigen::Vector3d last_governor_cmd_vel_ = Eigen::Vector3d::Zero();
-        bool has_last_governor_cmd_ = false;
-        Eigen::Vector3d cmd_governor_normal_state_ = Eigen::Vector3d::Zero();
-        bool cmd_governor_initialized_ = false;
-        double cmd_governor_last_l_ = 0.0;
-        ros::Time cmd_switch_motion_limit_until_;
         struct OdomPosSample { ros::Time t; Eigen::Vector3d p; };
         std::deque<OdomPosSample> odom_pos_history_;
         Eigen::Vector3d odom_vel_est_ = Eigen::Vector3d::Zero();//由 odom 位置差分估计的真实速度
@@ -313,84 +283,6 @@ class gvf_manager
             std::vector<Eigen::Vector3d> start_end_derivatives;
         };
 
-        struct GovernorCandidate {
-            bool have = false;
-            double cost = 0.0;
-            double l = 0.0;
-            double query_w = 0.0;
-            double path_w_start = 0.0;
-            double path_w_end = 0.0;
-            Eigen::Vector3d cmd = Eigen::Vector3d::Zero();
-            Eigen::Vector3d n = Eigen::Vector3d::Zero();
-            Eigen::Vector3d n_raw = Eigen::Vector3d::Zero();
-            Eigen::Vector3d base_delta = Eigen::Vector3d::Zero();
-            Eigen::Vector3d v_model = Eigen::Vector3d::Zero();
-            double vel_cost = 0.0;
-            double l_ff_cost = 0.0;
-            double l_rate_cost = 0.0;
-            double normal_cost = 0.0;
-            double normal_rate_cost = 0.0;
-            double tau_vel_error = 0.0;
-            double normal_vel_error_norm = 0.0;
-            bool normal_vel_error_capped = false;
-            bool normal_rate_limited = false;
-        };
-
-        struct GovernorCommandDebug {
-            bool guidance_valid = false;
-            bool fallback_hold_pos = false;
-            bool final_cmd_overridden = false;
-            bool state_reset_due_to_override = false;
-            bool state_reset_due_to_lead_limit = false;
-            bool normal_rate_limited = false;
-            bool lead_limit_violation = false;
-            bool normal_vel_error_capped = false;
-            bool best_clamped_to_end = false;
-            int candidate_count = 0;
-            int valid_count = 0;
-            int path_end_clamped_count = 0;
-            int skipped_lead_count = 0;
-            double raw_v_norm = 0.0;
-            double raw_v_tau = 0.0;
-            double raw_v_normal_norm = 0.0;
-            double v_tau_intent = 0.0;
-            double v_n_intent_norm = 0.0;
-            double l_ff = 0.0;
-            double best_l = 0.0;
-            double best_query_w = 0.0;
-            double best_cost = 0.0;
-            double base_delta_norm = 0.0;
-            double normal_raw_norm = 0.0;
-            double normal_state_norm = 0.0;
-            double active_normal_max = 0.0;
-            double selected_v_model_norm = 0.0;
-            double vel_error_norm = 0.0;
-            double tau_vel_error = 0.0;
-            double normal_vel_error_norm = 0.0;
-            double vel_cost = 0.0;
-            double l_ff_cost = 0.0;
-            double l_rate_cost = 0.0;
-            double normal_cost = 0.0;
-            double normal_rate_cost = 0.0;
-            double cmd_dist = 0.0;
-            double path_w_start = 0.0;
-            double path_w_end = 0.0;
-            double cmd_delta_rate = 0.0;
-            double estimated_acc = 0.0;
-            double e_perp_norm = 0.0;
-        };
-
-        struct GovernorCommandResult {
-            Eigen::Vector3d cmd_pos = Eigen::Vector3d::Zero();
-            Eigen::Vector3d yaw_cmd_vec = Eigen::Vector3d::Zero();
-            Eigen::Vector3d selected_n = Eigen::Vector3d::Zero();
-            double selected_l = 0.0;
-            bool command_valid = false;
-            bool selected_valid_for_state = false;
-            std::string final_cmd_source = "GOVERNOR_INVALID_HOLD";
-            std::string fallback_reason = "none";
-        };
-
         bool planKinoToGoal(gvfManager& pm,
                             const Eigen::Vector3d& start_pt,
                             const Eigen::Vector3d& start_vel,
@@ -415,28 +307,11 @@ class gvf_manager
         bool pathTangentAtW(const std::shared_ptr<gvf>& g,
                             double query_w,
                             Eigen::Vector3d& tangent) const;
-        void resetGovernorState();
-        GovernorCommandResult makeGovernorInvalidHold(const Eigen::Vector3d& pos,
-                                                      const std::string& reason,
-                                                      GovernorCommandDebug& dbg);
-        GovernorCommandResult runVelocityMatchingGovernor(gvfManager& pm,
-                                                          const gvf::LiftedGuidanceResult& out,
-                                                          const Eigen::Vector3d& pos,
-                                                          double progress_w_after,
-                                                          double dt,
-                                                          double kp_equiv,
-                                                          GovernorCommandDebug& dbg);
-        void updateGovernorCommandHistory(const Eigen::Vector3d& pos,
-                                          const Eigen::Vector3d& cmd_pos,
-                                          double dt,
-                                          GovernorCommandDebug& dbg);
-        void logGovernorCommand(const GovernorCommandResult& result,
-                                const GovernorCommandDebug& dbg,
-                                const Eigen::Vector3d& cmd_pos,
-                                double real_dis_to_goal,
-                                double kp_equiv,
-                                bool switch_active) const;
         void publishB2VelocityCommand(const Eigen::Vector3d& guidance_world, double dt);
+        void publishB2WawareVelocityCommand(const std::shared_ptr<gvf>& gvf_ptr,
+                                            double progress_w0,
+                                            const Eigen::Vector3d& current_guidance_world,
+                                            double dt);
         void publishZeroB2VelocityCommand();
         Eigen::Vector3d projectToPlanningSlice(const Eigen::Vector3d& pos) const;
         double yawFromTrajectory(const Eigen::MatrixXd& traj, int index) const;
@@ -479,20 +354,7 @@ class gvf_manager
                 // --------- Replan helpers (candidate + switch decision) ---------
         bool shouldAcceptCandidate(const Eigen::MatrixXd& old_traj, const Eigen::MatrixXd& old_vel, const Eigen::VectorXd& old_time, int old_i0,
                         const Eigen::MatrixXd& new_traj, const Eigen::MatrixXd& new_vel, const Eigen::VectorXd& new_time, int new_i0,
-                        const Eigen::Vector3d& goal_pt, std::string& reason_out,
-                        double accepted_progress_w, double accepted_path_w_end);
-        static bool shouldForceAcceptForGovernorPathShort(double progress_w,
-                                                          double path_w_end,
-                                                          double governor_l_max,
-                                                          double margin_w)
-        {
-            if (!std::isfinite(progress_w) || !std::isfinite(path_w_end)) {
-                return false;
-            }
-            const double remaining_w = path_w_end - progress_w;
-            const double required_w = std::max(0.0, governor_l_max) + std::max(0.0, margin_w);
-            return remaining_w <= required_w;
-        }
+                        const Eigen::Vector3d& goal_pt, std::string& reason_out);
         void publishPathMsg(const Eigen::MatrixXd& traj, const Eigen::MatrixXd& vel);
         void publishReferencePathMsg(const Eigen::MatrixXd& traj, const Eigen::MatrixXd& vel, ros::Publisher& pub);
         void generateCircleReference(const Eigen::Vector3d& center);

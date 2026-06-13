@@ -61,29 +61,6 @@ namespace FLAG_Race
 
         nh.param("gvf/slow_radius", slow_radius, 1.0);
         nh.param("gvf/stop_radius", stop_radius, 0.3);
-        nh.param("gvf/cmd/vel_max", cmd_vel_max_, 1.5);
-        nh.param("gvf/cmd/acc_max", cmd_acc_max_, 1.5);
-        nh.param("gvf/cmd/pos_gain_equiv", cmd_pos_gain_equiv_, 1.10);
-        nh.param("gvf/cmd/switch_motion_limit_time", cmd_switch_motion_limit_time_, 0.25);
-        nh.param("gvf/cmd/tangent_vel_max", cmd_tangent_vel_max_, 2.0);
-        nh.param("gvf/cmd/governor_l_min", cmd_governor_l_min_, 0.0);
-        nh.param("gvf/cmd/governor_l_max", cmd_governor_l_max_, 1.6);
-        nh.param("gvf/cmd/governor_l_step", cmd_governor_l_step_, 0.05);
-        nh.param("gvf/cmd/governor_l_rate_max", cmd_governor_l_rate_max_, 4.0);
-        nh.param("gvf/cmd/governor_l_ff_weight", cmd_governor_l_ff_weight_, 0.8);
-        nh.param("gvf/cmd/governor_lead_max", cmd_governor_lead_max_, 1.6);
-        nh.param("gvf/cmd/governor_normal_cross_max", cmd_governor_normal_cross_max_, 0.08);
-        nh.param("gvf/cmd/governor_normal_deadband", cmd_governor_normal_deadband_, 0.05);
-        nh.param("gvf/cmd/governor_normal_full_error", cmd_governor_normal_full_error_, 0.35);
-        nh.param("gvf/cmd/governor_normal_max", cmd_governor_normal_max_, 0.0);
-        nh.param("gvf/cmd/governor_normal_rate_max", cmd_governor_normal_rate_max_, 0.6);
-        nh.param("gvf/cmd/governor_l_rate_weight", cmd_governor_l_rate_weight_, 0.005);
-        nh.param("gvf/cmd/governor_normal_weight", cmd_governor_normal_weight_, 0.60);
-        nh.param("gvf/cmd/governor_normal_rate_weight", cmd_governor_normal_rate_weight_, 0.10);
-        nh.param("gvf/cmd/governor_tau_vel_weight", cmd_governor_tau_vel_weight_, 1.0);
-        nh.param("gvf/cmd/governor_normal_vel_weight", cmd_governor_normal_vel_weight_, 1.0);
-        nh.param("gvf/cmd/governor_normal_vel_error_cap", cmd_governor_normal_vel_error_cap_, 2.0);
-        nh.param("gvf/switch/governor_path_margin_w", switch_governor_path_margin_w_, 0.2);
 
         nh.param("gvf/b2/vx_max", b2_mpc_config_.vx_max, 0.6);
         nh.param("gvf/b2/vy_max", b2_mpc_config_.vy_max, 0.4);
@@ -104,6 +81,8 @@ namespace FLAG_Race
         nh.param("gvf/b2/mpc/heading_weight", b2_mpc_config_.heading_weight, 1.0);
         nh.param("gvf/b2/mpc/control_weight", b2_mpc_config_.control_weight, 0.02);
         nh.param("gvf/b2/mpc/control_rate_weight", b2_mpc_config_.control_rate_weight, 0.20);
+        nh.param("gvf/b2/mpc/lateral_error_weight", b2_mpc_config_.lateral_error_weight, 2.0);
+        nh.param("gvf/b2/mpc/reference_invalid_penalty", b2_mpc_config_.reference_invalid_penalty, 1e4);
         b2_mpc_controller_.setConfig(b2_mpc_config_);
 
         nh.param("gvf/b2/footprint/enable", b2_footprint_config_.enable, true);
@@ -129,7 +108,6 @@ namespace FLAG_Race
 
         // nh.param("gvf/flight_height", flight_height_, 1.0);  // 设定飞行高度
         last_replan_time_ = ros::Time(0);  // 初始化上次重规划时间
-        cmd_switch_motion_limit_until_ = ros::Time(0);
         current_traj_index_ = 0;  // 初始化当前轨迹索引
         test_traj_index_ = 0;  // 初始化测试轨迹索引
         last_yaw = 0.0;  // 初始化yaw角度
@@ -230,13 +208,6 @@ void gvf_manager::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
     ref_pos = start_pt;
     last_curve_vel_.setZero();
     has_last_curve_vel_ = false;
-    cmd_switch_motion_limit_until_ = ros::Time(0);
-    last_governor_cmd_pos_ = start_pt;
-    last_governor_cmd_vel_.setZero();
-    has_last_governor_cmd_ = false;
-    cmd_governor_normal_state_.setZero();
-    cmd_governor_initialized_ = false;
-    cmd_governor_last_l_ = 0.0;
     ref_initialized = false;
     last_cmd_pos_ = start_pt;
 
@@ -319,433 +290,12 @@ bool gvf_manager::pathTangentAtW(const std::shared_ptr<gvf>& g,
     return tangent.norm() > 1e-6;
 }
 
-void gvf_manager::resetGovernorState()
-{
-    cmd_governor_normal_state_.setZero();
-    cmd_governor_initialized_ = false;
-    cmd_governor_last_l_ = 0.0;
-}
-
-gvf_manager::GovernorCommandResult
-gvf_manager::makeGovernorInvalidHold(const Eigen::Vector3d& pos,
-                                     const std::string& reason,
-                                     GovernorCommandDebug& dbg)
-{
-    GovernorCommandResult result;
-    result.cmd_pos = pos;
-    result.yaw_cmd_vec.setZero();
-    result.final_cmd_source = "GOVERNOR_INVALID_HOLD";
-    result.fallback_reason = reason;
-    dbg.fallback_hold_pos = true;
-    resetGovernorState();
-    dbg.normal_state_norm = 0.0;
-    return result;
-}
-
-gvf_manager::GovernorCommandResult
-gvf_manager::runVelocityMatchingGovernor(gvfManager& pm,
-                                         const gvf::LiftedGuidanceResult& out,
-                                         const Eigen::Vector3d& pos,
-                                         double progress_w_after,
-                                         double dt,
-                                         double kp_equiv,
-                                         GovernorCommandDebug& dbg)
-{
-    GovernorCommandResult result;
-    result.cmd_pos = pos;
-    result.yaw_cmd_vec.setZero();
-    dbg.guidance_valid = true;
-    dbg.e_perp_norm = out.e_perp.norm();
-
-    const Eigen::Vector3d raw_v = out.v_cmd;
-    dbg.raw_v_norm = raw_v.norm();
-    const double tangent_norm = out.tangent.norm();
-    const bool path_ready = pm.gvf_ && pm.gvf_->reparam_ready_ && pm.gvf_->sample_w_.size() >= 2;
-    if (!path_ready)
-    {
-        return makeGovernorInvalidHold(pos, "path_invalid", dbg);
-    }
-    if (tangent_norm <= 1e-6)
-    {
-        return makeGovernorInvalidHold(pos, "tangent_invalid", dbg);
-    }
-
-    const Eigen::Vector3d t_current = out.tangent / tangent_norm;
-    dbg.raw_v_tau = raw_v.dot(t_current);
-    const Eigen::Vector3d raw_v_t = dbg.raw_v_tau * t_current;
-    const Eigen::Vector3d v_n_intent = raw_v - raw_v_t;
-    dbg.raw_v_normal_norm = v_n_intent.norm();
-    dbg.v_tau_intent = std::max(0.0, dbg.raw_v_tau);
-    const double tangent_vel_limit = std::max(0.0, cmd_tangent_vel_max_);
-    if (tangent_vel_limit > 1e-6)
-    {
-        dbg.v_tau_intent = std::min(dbg.v_tau_intent, tangent_vel_limit);
-    }
-    dbg.v_n_intent_norm = v_n_intent.norm();
-
-    auto projectNormal = [](const Eigen::Vector3d& v, const Eigen::Vector3d& t) {
-        return v - v.dot(t) * t;
-    };
-    auto limitNormalMagnitude = [](Eigen::Vector3d v, double max_norm) {
-        const double n = v.norm();
-        if (max_norm <= 1e-6)
-        {
-            v.setZero();
-        }
-        else if (n > max_norm && n > 1e-6)
-        {
-            v *= max_norm / n;
-        }
-        return v;
-    };
-    auto enforceCrossInPlane = [&](Eigen::Vector3d v,
-                                   const Eigen::Vector3d& t,
-                                   const Eigen::Vector3d& e_hat,
-                                   bool has_e_hat,
-                                   double cross_max) {
-        if (has_e_hat)
-        {
-            const double min_dot = -std::max(0.0, cross_max);
-            const double d = v.dot(e_hat);
-            if (d < min_dot)
-            {
-                const Eigen::Vector3d e_hat_plane = projectNormal(e_hat, t);
-                const double denom = e_hat_plane.dot(e_hat);
-                if (denom > 1e-6)
-                {
-                    v += ((min_dot - d) / denom) * e_hat_plane;
-                }
-            }
-        }
-        return v;
-    };
-    auto constrainNormal = [&](Eigen::Vector3d n,
-                               const Eigen::Vector3d& t,
-                               const Eigen::Vector3d& e_hat,
-                               bool has_e_hat,
-                               double normal_max) {
-        n = projectNormal(n, t);
-        n = limitNormalMagnitude(n, normal_max);
-        n = enforceCrossInPlane(n, t, e_hat, has_e_hat, cmd_governor_normal_cross_max_);
-        n = projectNormal(n, t);
-        n = limitNormalMagnitude(n, normal_max);
-        return n;
-    };
-
-    const double l_min = std::max(0.0, cmd_governor_l_min_);
-    const double l_max = std::max(l_min, cmd_governor_l_max_);
-    const double l_step = std::max(1e-3, cmd_governor_l_step_);
-    dbg.l_ff = std::max(l_min, std::min(dbg.v_tau_intent / kp_equiv, l_max));
-
-    const bool was_initialized = cmd_governor_initialized_;
-    if (!cmd_governor_initialized_)
-    {
-        cmd_governor_last_l_ = dbg.l_ff;
-        cmd_governor_normal_state_.setZero();
-        cmd_governor_initialized_ = true;
-    }
-
-    const double l_rate_max = std::max(0.0, cmd_governor_l_rate_max_);
-    const double rate_lower = std::max(l_min, cmd_governor_last_l_ - l_rate_max * dt);
-    const double rate_upper = std::min(l_max, cmd_governor_last_l_ + l_rate_max * dt);
-    std::vector<double> l_candidates;
-    for (double l = l_min; l <= l_max + 0.5 * l_step; l += l_step)
-    {
-        l_candidates.push_back(std::max(l_min, std::min(l, l_max)));
-    }
-    l_candidates.push_back(dbg.l_ff);
-    l_candidates.push_back(cmd_governor_last_l_);
-    l_candidates.push_back(rate_lower);
-    l_candidates.push_back(rate_upper);
-    for (double& l : l_candidates)
-    {
-        l = std::max(l_min, std::min(l, l_max));
-    }
-    std::sort(l_candidates.begin(), l_candidates.end());
-    l_candidates.erase(std::unique(l_candidates.begin(), l_candidates.end(),
-                                   [](double a, double b) {
-                                       return std::abs(a - b) < 1e-4;
-                                   }),
-                       l_candidates.end());
-
-    const Eigen::Vector3d delta_des = raw_v / kp_equiv;
-    const double rho = out.e_perp.norm();
-    const bool has_e_hat = rho > 1e-6;
-    Eigen::Vector3d e_hat = Eigen::Vector3d::Zero();
-    if (has_e_hat)
-    {
-        e_hat = out.e_perp / rho;
-    }
-    const double normal_deadband = std::max(0.0, cmd_governor_normal_deadband_);
-    const double normal_full_error = std::max(normal_deadband + 1e-6,
-                                              cmd_governor_normal_full_error_);
-    const double normal_max_cfg = std::max(0.0, cmd_governor_normal_max_);
-    if (rho <= normal_deadband)
-    {
-        dbg.active_normal_max = 0.0;
-    }
-    else if (rho < normal_full_error)
-    {
-        dbg.active_normal_max = normal_max_cfg *
-            (rho - normal_deadband) / (normal_full_error - normal_deadband);
-    }
-    else
-    {
-        dbg.active_normal_max = normal_max_cfg;
-    }
-
-    GovernorCandidate best;
-    const double lead_max = std::max(0.0, cmd_governor_lead_max_);
-    const double normal_rate_max = std::max(0.0, cmd_governor_normal_rate_max_);
-    const double path_end_eps = 1e-6;
-
-    for (double l : l_candidates)
-    {
-        if (was_initialized &&
-            (l < rate_lower - 1e-6 || l > rate_upper + 1e-6))
-        {
-            continue;
-        }
-
-        ++dbg.candidate_count;
-        Eigen::Vector3d p_l = Eigen::Vector3d::Zero();
-        bool clamped_to_end = false;
-        double candidate_path_w_start = 0.0;
-        double candidate_path_w_end = 0.0;
-        const double query_w = progress_w_after + l;
-        if (!pathPointAtW(pm.gvf_, query_w, p_l, clamped_to_end,
-                          candidate_path_w_start, candidate_path_w_end))
-        {
-            continue;
-        }
-        dbg.path_w_start = candidate_path_w_start;
-        dbg.path_w_end = candidate_path_w_end;
-        if (clamped_to_end || query_w > candidate_path_w_end - path_end_eps)
-        {
-            ++dbg.path_end_clamped_count;
-            continue;
-        }
-
-        Eigen::Vector3d t_l = t_current;
-        Eigen::Vector3d target_tangent = Eigen::Vector3d::Zero();
-        if (pathTangentAtW(pm.gvf_, query_w, target_tangent))
-        {
-            t_l = target_tangent.normalized();
-        }
-
-        GovernorCandidate c;
-        c.have = true;
-        c.l = l;
-        c.query_w = query_w;
-        c.path_w_start = candidate_path_w_start;
-        c.path_w_end = candidate_path_w_end;
-        c.base_delta = p_l - pos;
-        c.n_raw = delta_des - c.base_delta;
-        c.n = constrainNormal(c.n_raw, t_l, e_hat, has_e_hat, dbg.active_normal_max);
-
-        if (was_initialized && normal_rate_max > 1e-6 && dt > 1e-6)
-        {
-            Eigen::Vector3d d_n = c.n - cmd_governor_normal_state_;
-            const double max_dn = normal_rate_max * dt;
-            const double dn_norm = d_n.norm();
-            if (dn_norm > max_dn && dn_norm > 1e-6)
-            {
-                c.n = cmd_governor_normal_state_ + d_n * (max_dn / dn_norm);
-                c.normal_rate_limited = true;
-            }
-        }
-        c.n = projectNormal(c.n, t_l);
-        c.n = enforceCrossInPlane(c.n, t_l, e_hat, has_e_hat, cmd_governor_normal_cross_max_);
-        c.n = projectNormal(c.n, t_l);
-        c.n = limitNormalMagnitude(c.n, dbg.active_normal_max);
-
-        c.cmd = p_l + c.n;
-        const double candidate_lead = (c.cmd - pos).norm();
-        if (lead_max > 1e-6 && candidate_lead > lead_max && candidate_lead > 1e-6)
-        {
-            dbg.lead_limit_violation = true;
-            ++dbg.skipped_lead_count;
-            continue;
-        }
-
-        c.v_model = kp_equiv * (c.cmd - pos);
-        const double v_model_tau = c.v_model.dot(t_current);
-        const Eigen::Vector3d v_model_n = c.v_model - v_model_tau * t_current;
-        c.tau_vel_error = v_model_tau - dbg.v_tau_intent;
-        const Eigen::Vector3d n_err = v_model_n - v_n_intent;
-        c.normal_vel_error_norm = n_err.norm();
-        const double normal_vel_error_cap = std::max(0.0, cmd_governor_normal_vel_error_cap_);
-        double normal_vel_error_for_cost = c.normal_vel_error_norm;
-        if (normal_vel_error_cap > 1e-6 &&
-            normal_vel_error_for_cost > normal_vel_error_cap)
-        {
-            normal_vel_error_for_cost = normal_vel_error_cap;
-            c.normal_vel_error_capped = true;
-        }
-        c.vel_cost = std::max(0.0, cmd_governor_tau_vel_weight_) *
-                         c.tau_vel_error * c.tau_vel_error +
-                     std::max(0.0, cmd_governor_normal_vel_weight_) *
-                         normal_vel_error_for_cost * normal_vel_error_for_cost;
-        c.normal_cost = std::max(0.0, cmd_governor_normal_weight_) *
-                        (kp_equiv * c.n).squaredNorm();
-        c.l_ff_cost = std::max(0.0, cmd_governor_l_ff_weight_) *
-                      std::pow(kp_equiv * (l - dbg.l_ff), 2);
-        if (was_initialized)
-        {
-            c.normal_rate_cost = std::max(0.0, cmd_governor_normal_rate_weight_) *
-                                 (kp_equiv * (c.n - cmd_governor_normal_state_)).squaredNorm();
-            c.l_rate_cost = std::max(0.0, cmd_governor_l_rate_weight_) *
-                            std::pow(kp_equiv * (l - cmd_governor_last_l_), 2);
-        }
-        c.cost = c.vel_cost + c.normal_cost + c.l_ff_cost +
-                 c.normal_rate_cost + c.l_rate_cost;
-
-        ++dbg.valid_count;
-        if (!best.have || c.cost < best.cost)
-        {
-            best = c;
-        }
-    }
-
-    if (!best.have)
-    {
-        if (dbg.candidate_count > 0 &&
-            dbg.path_end_clamped_count == dbg.candidate_count)
-        {
-            return makeGovernorInvalidHold(pos, "all_candidates_path_end_clamped", dbg);
-        }
-        return makeGovernorInvalidHold(pos, "no_valid_candidate", dbg);
-    }
-
-    result.cmd_pos = best.cmd;
-    result.yaw_cmd_vec = best.cmd - pos;
-    result.final_cmd_source = "VEL_MATCH_GOVERNOR";
-    result.fallback_reason = "none";
-    result.command_valid = true;
-    result.selected_valid_for_state = true;
-    result.selected_l = best.l;
-    result.selected_n = best.n;
-
-    dbg.fallback_hold_pos = false;
-    dbg.best_l = best.l;
-    dbg.best_query_w = best.query_w;
-    dbg.best_cost = best.cost;
-    dbg.base_delta_norm = best.base_delta.norm();
-    dbg.normal_raw_norm = best.n_raw.norm();
-    dbg.normal_state_norm = best.n.norm();
-    dbg.normal_rate_limited = best.normal_rate_limited;
-    dbg.selected_v_model_norm = best.v_model.norm();
-    dbg.tau_vel_error = best.tau_vel_error;
-    dbg.normal_vel_error_norm = best.normal_vel_error_norm;
-    dbg.normal_vel_error_capped = best.normal_vel_error_capped;
-    dbg.vel_error_norm = std::sqrt(best.tau_vel_error * best.tau_vel_error +
-                                   best.normal_vel_error_norm * best.normal_vel_error_norm);
-    dbg.vel_cost = best.vel_cost;
-    dbg.l_ff_cost = best.l_ff_cost;
-    dbg.l_rate_cost = best.l_rate_cost;
-    dbg.normal_cost = best.normal_cost;
-    dbg.normal_rate_cost = best.normal_rate_cost;
-    dbg.cmd_dist = (result.cmd_pos - pos).norm();
-    dbg.path_w_start = best.path_w_start;
-    dbg.path_w_end = best.path_w_end;
-    dbg.best_clamped_to_end = false;
-    return result;
-}
-
-void gvf_manager::updateGovernorCommandHistory(const Eigen::Vector3d& pos,
-                                               const Eigen::Vector3d& cmd_pos,
-                                               double dt,
-                                               GovernorCommandDebug& dbg)
-{
-    dbg.cmd_dist = (cmd_pos - pos).norm();
-    if (has_last_governor_cmd_ && dt > 1e-6)
-    {
-        const Eigen::Vector3d cmd_vel_est = (cmd_pos - last_governor_cmd_pos_) / dt;
-        dbg.cmd_delta_rate = cmd_vel_est.norm();
-        dbg.estimated_acc = (cmd_vel_est - last_governor_cmd_vel_).norm() / dt;
-        last_governor_cmd_vel_ = cmd_vel_est;
-    }
-    else
-    {
-        last_governor_cmd_vel_.setZero();
-    }
-    last_governor_cmd_pos_ = cmd_pos;
-    has_last_governor_cmd_ = true;
-    last_cmd_pos_ = cmd_pos;
-}
-
-void gvf_manager::logGovernorCommand(const GovernorCommandResult& result,
-                                     const GovernorCommandDebug& dbg,
-                                     const Eigen::Vector3d& cmd_pos,
-                                     double real_dis_to_goal,
-                                     double kp_equiv,
-                                     bool switch_active) const
-{
-    ROS_WARN_THROTTLE(1.0,
-      "[GVF_CMD] source=%s reason=%s raw=%.2f odom_v=%.2f cmd_dist=%.2f K=%.2f cmd=(%.2f %.2f %.2f) d_goal=%.2f",
-      result.final_cmd_source.c_str(), result.fallback_reason.c_str(), dbg.raw_v_norm,
-      odom_vel_lpf_.head<2>().norm(), dbg.cmd_dist, kp_equiv,
-      cmd_pos.x(), cmd_pos.y(), cmd_pos.z(), real_dis_to_goal);
-
-    ROS_WARN_THROTTLE(
-        0.2,
-        "[GVF][CMD_VEL_MATCH_GOV] final_cmd_source=%s fallback_reason=%s raw_v_norm=%.3f raw_v_tau=%.3f raw_v_normal_norm=%.3f v_tau_intent=%.3f v_n_intent_norm=%.3f cmd_vel_max=%.3f tangent_vel_max=%.3f L_ff=%.3f best_L=%.3f best_query_w=%.3f path_w_start=%.3f path_w_end=%.3f best_clamped_to_end=%d best_cost=%.3f candidate_count=%d valid_count=%d path_end_clamped_count=%d skipped_lead_count=%d base_delta_norm=%.3f normal_raw_norm=%.3f normal_state_norm=%.3f normal_max=%.3f normal_cross_max=%.3f normal_rate_limited=%d lead_limit_violation=%d selected_v_model_norm=%.3f vel_error_norm=%.3f tau_vel_error=%.3f normal_vel_error_norm=%.3f normal_vel_error_capped=%d vel_cost=%.3f l_ff_cost=%.3f l_rate_cost=%.3f normal_cost=%.3f normal_rate_cost=%.3f cmd_dist=%.3f cmd_delta_rate=%.3f estimated_acc=%.3f acc_max=%.3f switch_active=%d K_eq=%.3f e_perp_norm=%.3f fallback_hold_pos=%d initialized=%d final_cmd_overridden=%d state_reset_due_to_override=%d state_reset_due_to_lead_limit=%d actual_stored_normal_norm=%.3f",
-        result.final_cmd_source.c_str(),
-        result.fallback_reason.c_str(),
-        dbg.raw_v_norm,
-        dbg.raw_v_tau,
-        dbg.raw_v_normal_norm,
-        dbg.v_tau_intent,
-        dbg.v_n_intent_norm,
-        cmd_vel_max_,
-        cmd_tangent_vel_max_,
-        dbg.l_ff,
-        dbg.best_l,
-        dbg.best_query_w,
-        dbg.path_w_start,
-        dbg.path_w_end,
-        dbg.best_clamped_to_end ? 1 : 0,
-        dbg.best_cost,
-        dbg.candidate_count,
-        dbg.valid_count,
-        dbg.path_end_clamped_count,
-        dbg.skipped_lead_count,
-        dbg.base_delta_norm,
-        dbg.normal_raw_norm,
-        dbg.normal_state_norm,
-        dbg.active_normal_max,
-        std::max(0.0, cmd_governor_normal_cross_max_),
-        dbg.normal_rate_limited ? 1 : 0,
-        dbg.lead_limit_violation ? 1 : 0,
-        dbg.selected_v_model_norm,
-        dbg.vel_error_norm,
-        dbg.tau_vel_error,
-        dbg.normal_vel_error_norm,
-        dbg.normal_vel_error_capped ? 1 : 0,
-        dbg.vel_cost,
-        dbg.l_ff_cost,
-        dbg.l_rate_cost,
-        dbg.normal_cost,
-        dbg.normal_rate_cost,
-        dbg.cmd_dist,
-        dbg.cmd_delta_rate,
-        dbg.estimated_acc,
-        std::max(0.0, cmd_acc_max_),
-        switch_active ? 1 : 0,
-        kp_equiv,
-        dbg.e_perp_norm,
-        dbg.fallback_hold_pos ? 1 : 0,
-        cmd_governor_initialized_ ? 1 : 0,
-        dbg.final_cmd_overridden ? 1 : 0,
-        dbg.state_reset_due_to_override ? 1 : 0,
-        dbg.state_reset_due_to_lead_limit ? 1 : 0,
-        cmd_governor_normal_state_.norm());
-}
-
 void gvf_manager::publishB2VelocityCommand(const Eigen::Vector3d& guidance_world, double dt)
 {
     geometry_msgs::Twist cmd;
     B2MpcState state;
+    state.position_world = odom_;
+    state.position_world.z() = planning_z_;
     state.yaw = current_yaw_;
     state.yaw_rate = current_yaw_rate_;
     state.velocity_world.setZero();
@@ -763,7 +313,7 @@ void gvf_manager::publishB2VelocityCommand(const Eigen::Vector3d& guidance_world
     cmd_pub.publish(cmd);
 
     std_msgs::Float64MultiArray debug;
-    debug.data.reserve(10);
+    debug.data.reserve(16);
     debug.data.push_back(guidance_world.x());
     debug.data.push_back(guidance_world.y());
     debug.data.push_back(state.velocity_world.x());
@@ -774,6 +324,59 @@ void gvf_manager::publishB2VelocityCommand(const Eigen::Vector3d& guidance_world
     debug.data.push_back(current_yaw_);
     debug.data.push_back(current_yaw_rate_);
     debug.data.push_back(dt);
+    debug.data.push_back(progress_w_);
+    debug.data.push_back(progress_w_);
+    debug.data.push_back(guidance_world.x());
+    debug.data.push_back(guidance_world.y());
+    debug.data.push_back(1.0);
+    debug.data.push_back(0.0);
+    b2_mpc_debug_pub.publish(debug);
+}
+
+void gvf_manager::publishB2WawareVelocityCommand(const std::shared_ptr<gvf>& gvf_ptr,
+                                                 double progress_w0,
+                                                 const Eigen::Vector3d& current_guidance_world,
+                                                 double dt)
+{
+    geometry_msgs::Twist cmd;
+    B2MpcState state;
+    state.position_world = odom_;
+    state.position_world.z() = planning_z_;
+    state.yaw = current_yaw_;
+    state.yaw_rate = current_yaw_rate_;
+    state.velocity_world.setZero();
+    if (odom_vel_initialized_) {
+        state.velocity_world = odom_vel_est_.head<2>();
+    }
+
+    const B2MpcCommand b2_cmd = b2_mpc_controller_.computeWaware(gvf_ptr, progress_w0, state, dt);
+    cmd.linear.x = b2_cmd.vx;
+    cmd.linear.y = b2_cmd.vy;
+    cmd.linear.z = 0.0;
+    cmd.angular.x = 0.0;
+    cmd.angular.y = 0.0;
+    cmd.angular.z = b2_cmd.yaw_rate;
+    cmd_pub.publish(cmd);
+
+    const B2MpcDebug& mpc_debug = b2_mpc_controller_.lastDebug();
+    std_msgs::Float64MultiArray debug;
+    debug.data.reserve(16);
+    debug.data.push_back(current_guidance_world.x());
+    debug.data.push_back(current_guidance_world.y());
+    debug.data.push_back(state.velocity_world.x());
+    debug.data.push_back(state.velocity_world.y());
+    debug.data.push_back(cmd.linear.x);
+    debug.data.push_back(cmd.linear.y);
+    debug.data.push_back(cmd.angular.z);
+    debug.data.push_back(current_yaw_);
+    debug.data.push_back(current_yaw_rate_);
+    debug.data.push_back(dt);
+    debug.data.push_back(progress_w_);
+    debug.data.push_back(mpc_debug.progress_w_end);
+    debug.data.push_back(mpc_debug.first_reference_world.x());
+    debug.data.push_back(mpc_debug.first_reference_world.y());
+    debug.data.push_back(static_cast<double>(mpc_debug.valid_reference_count));
+    debug.data.push_back(static_cast<double>(mpc_debug.invalid_reference_count));
     b2_mpc_debug_pub.publish(debug);
 }
 
@@ -852,7 +455,8 @@ void gvf_manager::cmdCallback(const ros::TimerEvent& event)
         return;
     }
 
-    out = pm.gvf_->calcLiftedGuidance3D(pos, progress_w_);
+    const double progress_w_before = progress_w_;
+    out = pm.gvf_->calcLiftedGuidance3D(pos, progress_w_before);
     if (!out.valid)
     {
         publishZeroB2VelocityCommand();
@@ -862,7 +466,7 @@ void gvf_manager::cmdCallback(const ros::TimerEvent& event)
 
     progress_w_ = out.w_proj + out.w_dot * dt;
     progress_initialized_ = true;
-    publishB2VelocityCommand(out.v_cmd, dt);
+    publishB2WawareVelocityCommand(pm.gvf_, progress_w_before, out.v_cmd, dt);
 
     ROS_WARN_THROTTLE(0.5,
         "[GVF][B2_CMD] vg=(%.3f %.3f %.3f) yaw=%.3f d_goal=%.3f progress_w=%.3f",
@@ -1048,13 +652,6 @@ void gvf_manager::odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
     ref_pos = start_pt;
     last_curve_vel_.setZero();
     has_last_curve_vel_ = false;
-    cmd_switch_motion_limit_until_ = ros::Time(0);
-    last_governor_cmd_pos_ = start_pt;
-    last_governor_cmd_vel_.setZero();
-    has_last_governor_cmd_ = false;
-    cmd_governor_normal_state_.setZero();
-    cmd_governor_initialized_ = false;
-    cmd_governor_last_l_ = 0.0;
     ref_initialized = false;
     last_cmd_pos_ = start_pt;
 
@@ -3366,8 +2963,7 @@ void gvf_manager::KinoPathCallback(const ros::TimerEvent& event)
                                             const Eigen::VectorXd& old_time, int old_i0,
                                             const Eigen::MatrixXd& new_traj, const Eigen::MatrixXd& new_vel,
                                             const Eigen::VectorXd& new_time, int new_i0,
-                                            const Eigen::Vector3d& goal_pt, std::string& reason_out,
-                                            double accepted_progress_w, double accepted_path_w_end)
+                                            const Eigen::Vector3d& goal_pt, std::string& reason_out)
     {
         bool accept_new = true;
         std::string switch_reason = "accept_default";
@@ -3389,16 +2985,10 @@ void gvf_manager::KinoPathCallback(const ros::TimerEvent& event)
         //检查旧轨迹是否发生碰撞，或者旧轨迹快结束
         const bool old_collision = checkCollision();
         const bool old_near_end = ((old_traj.rows() - 1 - old_i0) <= (old_traj.rows() - 1) / 2);
-        const bool old_governor_path_short = shouldForceAcceptForGovernorPathShort(
-            accepted_progress_w, accepted_path_w_end, cmd_governor_l_max_, switch_governor_path_margin_w_);
         if (old_collision || old_near_end)
         {
             logReplanReason(old_collision ? "collision" : "near_end");
             switch_reason = "accept_collision&timout";
-            accept_new = true;
-        } else if (old_governor_path_short) {
-            logReplanReason("governor_path_short");
-            switch_reason = "accept_governor_path_short";
             accept_new = true;
         } else {
             //旧轨迹仍然安全，检查新旧轨迹代价
@@ -3855,10 +3445,6 @@ void gvf_manager::FSMCallback(const ros::TimerEvent& event)
                 pm.last_traj_time_ = cand_time;
                 current_traj_index_ = new_i0;
                 last_switch_time_ = current_time;
-                cmd_switch_motion_limit_until_ = ros::Time::now() + ros::Duration(std::max(0.0, cmd_switch_motion_limit_time_));
-                cmd_governor_normal_state_.setZero();
-                cmd_governor_initialized_ = false;
-                cmd_governor_last_l_ = 0.0;
                 publishPathMsg(pm.last_traj, pm.last_vel);
             } else {
                 ROS_WARN_THROTTLE(1.0, "[GVF] GEN_NEW_TRAJ: plan failed, keep old");
@@ -3983,13 +3569,8 @@ void gvf_manager::FSMCallback(const ros::TimerEvent& event)
                 std::string reason = "accept_default";
 
                 if (old_traj.rows() > 0 && old_vel.rows() == old_traj.rows()) {
-                    double accepted_path_w_end = std::numeric_limits<double>::quiet_NaN();
-                    if (pm.gvf_ && pm.gvf_->reparam_ready_ && !pm.gvf_->sample_w_.empty()) {
-                        accepted_path_w_end = pm.gvf_->sample_w_.back();
-                    }
                     accept_new = shouldAcceptCandidate(old_traj, old_vel, pm.last_traj_time_, current_traj_index_, cand_traj, cand_vel,
-                                                       cand_time, new_i0, pm.goal_pt, reason,
-                                                       progress_w_, accepted_path_w_end);
+                                                       cand_time, new_i0, pm.goal_pt, reason);
                 }
                 Eigen::Vector3d v_ref_start = Eigen::Vector3d::Zero();
                 if (cand_vel.rows() > 0) {
@@ -4027,13 +3608,9 @@ void gvf_manager::FSMCallback(const ros::TimerEvent& event)
                     pm.last_traj_time_ = cand_time;
                     current_traj_index_ = new_i0;
                     last_switch_time_ = current_time;
-                    cmd_switch_motion_limit_until_ = ros::Time::now() + ros::Duration(std::max(0.0, cmd_switch_motion_limit_time_));
                     if (pm.gvf_) {
                         pm.gvf_->setNextPathWAnchor(w_anchor);
                     }
-                    cmd_governor_normal_state_.setZero();
-                    cmd_governor_initialized_ = false;
-                    cmd_governor_last_l_ = 0.0;
                 } else {
                     const auto anchor = computeKeepPathAnchor();
                     const double w_anchor = anchor.first;
