@@ -15,6 +15,8 @@
     
     <arg name="v_max" value="2.0"/>     
     <arg name="a_max" value="2.5"/>     
+    <arg name="record_bag" default="false" />
+    <arg name="bag_name" default="$(env HOME)/prjcxq/ISF-GVF_B2/bags/b2_gvf_exp.bag" />
 
   <node name="formation_planning" pkg="bspline_race" type="formation_planning" output="screen">
         <!-- Plan Manager -->
@@ -73,13 +75,13 @@
         <param name="gvf/circle_test/auto_start" value="true" />
         <!-- circle/figure8 -->
         <param name="gvf/circle_test/shape" value="figure8" />
-        <param name="gvf/circle_test/radius" value="8.0" />
-        <param name="gvf/circle_test/figure8_radius" value="10.0" />
+        <param name="gvf/circle_test/radius" value="5.0" />
+        <param name="gvf/circle_test/figure8_radius" value="7.0" />
         <param name="gvf/circle_test/height" value="0.5" />
         <param name="gvf/circle_test/points" value="960" />
-        <param name="gvf/circle_test/lookahead_min_w" value="2.0" />
-        <param name="gvf/circle_test/lookahead_max_w" value="4.0" />
-        <param name="gvf/circle_test/lookahead_step_w" value="0.5" />
+        <param name="gvf/circle_test/lookahead_min_w" value="1.0" />
+        <param name="gvf/circle_test/lookahead_max_w" value="2.5" />
+        <param name="gvf/circle_test/lookahead_step_w" value="0.20" />
         <param name="gvf/circle_test/center_x" value="0.0" />
         <param name="gvf/circle_test/center_y" value="0.0" />
         <param name="gvf/circle_test/center_z" value="0.0" />
@@ -133,6 +135,8 @@
         <param name="gvf/cmd/gain_test_axis" value="0" />
         <param name="gvf/odom_vel_est_window" value="0.3" />
         <param name="gvf/odom_vel_lpf_hz" value="2.0" />
+        <param name="gvf/executed_path_min_dist" value="0.05" />
+        <param name="gvf/executed_path_max_points" value="20000" />
         
 
         <!-- SDF Map -->
@@ -145,7 +149,7 @@
         <param name="sdf_map/local_update_range_y"  value="$(arg local_update_range_y)" /> 
         <param name="sdf_map/local_update_range_z"  value="$(arg local_update_range_z)" /> 
         
-        <param name="sdf_map/obstacles_inflation"     value="0.099" /> 
+        <param name="sdf_map/obstacles_inflation"     value="0.12" />
         <param name="sdf_map/local_bound_inflate"    value="0.0"/>
         <param name="sdf_map/local_map_margin" value="50"/>
         <param name="sdf_map/ground_height"        value="-0.01"/>
@@ -242,5 +246,21 @@
         <param name="planning/opt_maxeval" value="200" />
         <param name="planning/opt_maxtime" value="0.02" />
     </node>
+
+    <node if="$(arg record_bag)"
+          name="b2_gvf_recorder"
+          pkg="rosbag"
+          type="record"
+          output="screen"
+          args="-O $(arg bag_name)
+                /particle0/gvf/traj_vis
+                /b2_gvf/executed_path
+                /sdf_map/occupancy_inflate
+                /gvf/b2_mpc/debug
+                /Laser_map
+                /Odometry
+                /tf
+                /tf_static
+                /cmd_vel" />
 
 </launch>

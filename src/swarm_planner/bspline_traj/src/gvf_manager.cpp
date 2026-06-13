@@ -98,6 +98,8 @@ namespace FLAG_Race
         nh.param("gvf/cmd/gain_test_axis", cmd_gain_test_axis_, 0);
         nh.param("gvf/odom_vel_est_window", odom_vel_est_window_, 0.3);
         nh.param("gvf/odom_vel_lpf_hz", odom_vel_lpf_hz_, 2.0);
+        nh.param("gvf/executed_path_min_dist", executed_path_min_dist_, 0.05);
+        nh.param("gvf/executed_path_max_points", executed_path_max_points_, 20000);
 
 	        nh.param("gvf/collision_check_horizon_pts", collision_check_horizon_pts_, 120);
 	        nh.param("gvf/collision_consecutive_hits", collision_consecutive_hits_, 3);
@@ -140,6 +142,7 @@ namespace FLAG_Race
         kino_timer = nh.createTimer(ros::Duration(0.2), &gvf_manager::KinoPathCallback, this);  // 初始化新定时器
         goal_vis_pub = nh.advertise<visualization_msgs::Marker>("/goal_vis", 10);  // 初始化目标点可视化发布者
         b2_mpc_debug_pub = nh.advertise<std_msgs::Float64MultiArray>("/gvf/b2_mpc/debug", 10);
+        executed_path_pub = nh.advertise<nav_msgs::Path>("/b2_gvf/executed_path", 1, true);
 
         exec_fsm_timer = nh.createTimer(ros::Duration(0.02), &gvf_manager::FSMCallback, this);  // FSM 状态机定时器
 
@@ -149,6 +152,45 @@ namespace FLAG_Race
 
 	        // ROS_INFO("[GVF] debug_gate=%s (param: ~gvf/debug_gate)", debug_gate_ ? "true" : "false");
 	    } 
+
+void gvf_manager::publishExecutedPathFromOdom(const nav_msgs::Odometry::ConstPtr& msg,
+                                              const ros::Time& stamp)
+{
+    const Eigen::Vector3d pos(msg->pose.pose.position.x,
+                              msg->pose.pose.position.y,
+                              msg->pose.pose.position.z);
+    const double min_dist = std::max(0.0, executed_path_min_dist_);
+    if (has_last_executed_path_pos_ &&
+        (pos - last_executed_path_pos_).norm() < min_dist)
+    {
+        return;
+    }
+
+    geometry_msgs::PoseStamped pose;
+    pose.header = msg->header;
+    pose.header.stamp = stamp;
+    if (pose.header.frame_id.empty()) {
+        pose.header.frame_id = "camera_init";
+    }
+    pose.pose = msg->pose.pose;
+
+    if (executed_path_msg_.header.frame_id.empty()) {
+        executed_path_msg_.header.frame_id = pose.header.frame_id;
+    }
+    executed_path_msg_.header.stamp = stamp;
+    executed_path_msg_.poses.push_back(pose);
+
+    const int max_points = std::max(1, executed_path_max_points_);
+    if (static_cast<int>(executed_path_msg_.poses.size()) > max_points) {
+        executed_path_msg_.poses.erase(executed_path_msg_.poses.begin(),
+            executed_path_msg_.poses.begin() +
+                (static_cast<int>(executed_path_msg_.poses.size()) - max_points));
+    }
+
+    last_executed_path_pos_ = pos;
+    has_last_executed_path_pos_ = true;
+    executed_path_pub.publish(executed_path_msg_);
+}
 
 void gvf_manager::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
@@ -210,6 +252,7 @@ void gvf_manager::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
     has_last_curve_vel_ = false;
     ref_initialized = false;
     last_cmd_pos_ = start_pt;
+    b2_mpc_controller_.reset();
 
     if (enable_circle_reference_test_) {
         if (reference_shape_ == "figure8" || reference_shape_ == "8" || reference_shape_ == "lemniscate") {
@@ -632,6 +675,7 @@ void gvf_manager::odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
     this->odom_ = curr_pos;
     current_yaw_ = tf::getYaw(msg->pose.pose.orientation);
     current_yaw_rate_ = msg->twist.twist.angular.z;
+    publishExecutedPathFromOdom(msg, curr_time);
     
     if (!enable_circle_reference_test_ || !circle_reference_auto_start_ || circle_reference_auto_started_) {
         return;

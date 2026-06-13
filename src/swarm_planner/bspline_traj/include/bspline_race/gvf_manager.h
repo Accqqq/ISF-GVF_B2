@@ -120,6 +120,11 @@ class gvf_manager
         Eigen::Vector3d last_odom_pos_ = Eigen::Vector3d::Zero();
         ros::Time last_odom_time_;
         bool has_last_odom_ = false;
+        nav_msgs::Path executed_path_msg_;
+        Eigen::Vector3d last_executed_path_pos_ = Eigen::Vector3d::Zero();
+        bool has_last_executed_path_pos_ = false;
+        double executed_path_min_dist_ = 0.05;
+        int executed_path_max_points_ = 20000;
 
         // 碰撞触发重规划的去抖
         int collision_check_horizon_pts_ = 120;       // 只检查未来 N 个轨迹点
@@ -263,6 +268,7 @@ class gvf_manager
         ros::Timer      kino_timer;     // 新增定时器
         ros::Publisher  goal_vis_pub;   // 新增目标点可视化发布者
         ros::Publisher  b2_mpc_debug_pub;
+        ros::Publisher  executed_path_pub;
         ros::Timer      exec_fsm_timer;      // 新增 FSM 状态机定时器
 
         ros::Subscriber cmd_enable_sub; // 新增订阅者
@@ -328,7 +334,9 @@ class gvf_manager
         void initCallback(ros::NodeHandle &nh);
         void InitGvf(ros::NodeHandle &nh);
         void goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
-        void odomCallback(const nav_msgs::Odometry::ConstPtr& msg); 
+        void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
+        void publishExecutedPathFromOdom(const nav_msgs::Odometry::ConstPtr& msg,
+                                         const ros::Time& stamp);
         void execTimerCallback(const ros::TimerEvent& event);
 
         bool astaropt(const Eigen::Vector3d& curr_pos, Eigen::MatrixXd& pos_out, Eigen::MatrixXd& vel_out,
